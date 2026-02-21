@@ -2,6 +2,10 @@
 loki-data/
 grafana-data/
 
+# Generated remote Promtail configs (keep template)
+promtail-config-remote-*.yml
+!promtail-config-remote.yml
+
 # Temporary files
 *.tmp
 *.log

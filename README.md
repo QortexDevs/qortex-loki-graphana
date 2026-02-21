@@ -43,6 +43,59 @@ Docker Containers → Promtail → Loki → Grafana
    - Navigate to Dashboards → Container Logs Dashboard
    - You can filter by container name and stream (stdout/stderr)
 
+## Building Docker Image for Server Deployment
+
+To build a Docker image that packages all configurations for server deployment:
+
+### Build the Image
+
+**Linux/macOS:**
+```bash
+./build-and-run.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\build-and-run.ps1
+```
+
+**Manual build:**
+```bash
+docker build -t qortex-loki-grafana:latest .
+```
+
+### Run the Built Image
+
+The built image requires access to the host's Docker socket to discover containers:
+
+```bash
+docker run -d \
+  --name monitoring-stack \
+  -p 3000:3000 \
+  -p 3100:3100 \
+  -p 9080:9080 \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v loki-data:/loki \
+  -v grafana-data:/var/lib/grafana \
+  qortex-loki-grafana:latest
+```
+
+**Or use the deployment compose file:**
+```bash
+docker-compose -f docker-compose.deploy.yml up -d
+```
+
+### Image Details
+
+The Dockerfile creates an image that:
+- Packages all configuration files (Loki, Grafana, Promtail)
+- Includes docker-compose for orchestrating services
+- Automatically starts all services on container startup
+- Requires host Docker socket access for container discovery
+
+**Note:** The image runs docker-compose internally, so it needs access to the host's Docker daemon to start the individual service containers.
+
 ## Services
 
 ### Loki (Port 3100)
@@ -114,6 +167,147 @@ The Container Logs Dashboard includes:
 # Logs from specific service
 {compose_service="api"}
 ```
+
+## Distributed Logging (Multiple Servers)
+
+This setup supports collecting logs from multiple servers across your local network. Each remote server runs Promtail to collect logs and send them to the central Loki instance.
+
+### Architecture
+
+```
+Remote Server 1 → Promtail → ┐
+Remote Server 2 → Promtail → ├→ Central Loki → Grafana
+Remote Server 3 → Promtail → ┘
+```
+
+### Setup Instructions
+
+#### 1. Configure Central Loki Server
+
+The Loki configuration has been updated to accept remote connections (binds to `0.0.0.0`). Ensure the central Loki server is accessible on your network:
+
+- Loki should be reachable at `http://<LOKI_IP>:3100` from remote servers
+- Check firewall rules to allow TCP port 3100
+
+#### 2. Set Up Promtail on Remote Servers
+
+**Option A: Using the Configuration Generator Script**
+
+**Linux/macOS:**
+```bash
+./scripts/generate-remote-promtail-config.sh <LOKI_IP> <SERVER_NAME>
+```
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\generate-remote-promtail-config.ps1 -LokiHost <LOKI_IP> -ServerName <SERVER_NAME>
+```
+
+**Example:**
+```bash
+./scripts/generate-remote-promtail-config.sh 192.168.1.100 web-server-01
+```
+
+This generates a `promtail-config-remote.yml` file with the correct settings.
+
+**Option B: Manual Configuration**
+
+1. Copy `promtail-config-remote.yml` to your remote server
+2. Edit the file and replace:
+   - `LOKI_HOST` with your central Loki server IP (e.g., `192.168.1.100`)
+   - `SERVER_NAME` with a unique identifier for this server (e.g., `web-01`, `db-prod`)
+
+#### 3. Deploy Promtail on Remote Server
+
+Copy these files to your remote server:
+- `promtail-config-remote.yml` (generated or manually configured)
+- `docker-compose.promtail-remote.yml`
+
+Then start Promtail:
+```bash
+docker-compose -f docker-compose.promtail-remote.yml up -d
+```
+
+#### 4. Verify Remote Log Collection
+
+1. Check Promtail logs on remote server:
+   ```bash
+   docker logs promtail-remote
+   ```
+
+2. In Grafana, query logs with server label:
+   ```logql
+   {server="web-server-01"}
+   ```
+
+3. View logs from all servers:
+   ```logql
+   {server=~".+"}
+   ```
+
+### Remote Server Configuration Details
+
+The remote Promtail configuration:
+- Collects logs from Docker containers on the remote server
+- Adds a `server` label to identify the source server
+- Sends logs to central Loki over TCP/IP
+- Maintains the same container labels (container, compose_project, etc.)
+
+### Network Requirements
+
+- **Port 3100**: Must be open on the central Loki server for incoming connections
+- **Port 9080**: Optional, for Promtail metrics/health checks on remote servers
+- **Network**: Remote servers must be able to reach the central Loki server via TCP
+
+### Querying Distributed Logs
+
+Use the `server` label to filter logs by source:
+
+```logql
+# All logs from a specific server
+{server="web-server-01"}
+
+# Error logs from a specific server
+{server="web-server-01"} |= "error"
+
+# Logs from multiple servers
+{server=~"web-.*"}
+
+# Logs from a specific container across all servers
+{container="my-app", server=~".+"}
+
+# Compare logs across servers
+{container="api"} | json | server="web-01" or server="web-02"
+```
+
+### Security Considerations
+
+For production distributed setups:
+
+1. **Network Security**: Use VPN or private network for log transmission
+2. **Authentication**: Enable Loki authentication (update `loki-config.yml`)
+3. **TLS/HTTPS**: Configure TLS for Loki API endpoint
+4. **Firewall**: Restrict access to Loki port (3100) to known IPs
+5. **Rate Limiting**: Adjust `limits_config` in Loki for multiple remote sources
+
+### Troubleshooting Remote Logs
+
+**Promtail can't connect to Loki:**
+- Verify network connectivity: `curl http://<LOKI_IP>:3100/ready`
+- Check firewall rules on both servers
+- Verify Loki is bound to `0.0.0.0` (not `127.0.0.1`)
+
+**No logs appearing from remote server:**
+- Check Promtail logs: `docker logs promtail-remote`
+- Verify Promtail config has correct Loki URL
+- Check Loki logs for incoming connections: `docker logs loki`
+- Test with: `{server="<SERVER_NAME>"}` in Grafana
+
+**High latency or missing logs:**
+- Check network latency between servers
+- Verify Promtail positions file is being written
+- Increase Promtail batch size if needed
+- Check Loki ingestion limits
 
 ## Data Persistence
 

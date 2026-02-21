@@ -1,0 +1,29 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+
+# Docker volumes (if mounted as directories)
+loki-data/
+grafana-data/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker files (don't copy into image)
+Dockerfile
+.dockerignore
+docker-compose.override.yml

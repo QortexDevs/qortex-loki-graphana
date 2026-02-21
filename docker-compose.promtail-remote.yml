@@ -1,0 +1,34 @@
+version: '3.8'
+
+# Docker Compose file for running Promtail on remote servers
+# This collects logs from Docker containers and sends them to a central Loki instance
+#
+# Usage:
+#   1. Copy this file to your remote server
+#   2. Create promtail-config-remote.yml (or use the template)
+#   3. Update LOKI_HOST and SERVER_NAME in the config
+#   4. Run: docker-compose -f docker-compose.promtail-remote.yml up -d
+
+services:
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: promtail-remote
+    volumes:
+      - ./promtail-config-remote.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Optional: Mount additional log directories
+      # - /var/log:/var/log:ro
+      # - /opt/app/logs:/opt/app/logs:ro
+    command: -config.file=/etc/promtail/config.yml
+    restart: unless-stopped
+    network_mode: bridge
+    # Optional: Set hostname for better identification
+    hostname: promtail-remote
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9080/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

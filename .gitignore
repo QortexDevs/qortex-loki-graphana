@@ -1,0 +1,15 @@
+# Docker volumes (if mounted as directories)
+loki-data/
+grafana-data/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

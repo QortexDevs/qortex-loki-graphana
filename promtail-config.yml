@@ -1,0 +1,74 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: status
+            values: ["running"]
+    relabel_configs:
+      # Add container name as label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      
+      # Add container ID as label
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+      
+      # Add Docker Compose project as label if available
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+      
+      # Add Docker Compose service as label if available
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+      
+      # Add image name as label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_image']
+        target_label: 'image'
+        regex: '(.+)'
+        replacement: '${1}'
+      
+      # Set the log path
+      - source_labels: ['__meta_docker_container_id']
+        target_label: '__path__'
+        replacement: '/var/lib/docker/containers/${1}/${1}-json.log'
+    
+    pipeline_stages:
+      # Parse JSON logs from Docker
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+            tag: tag
+      
+      # Extract log level if present
+      - regex:
+          expression: '(?i)(?P<level>error|warn|warning|info|debug|trace|fatal|panic)'
+          source: output
+      
+      # Extract timestamp if present
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})'
+          source: output
+      
+      # Set output as the log line
+      - output:
+          source: output
+      
+      # Add stream label (stdout/stderr)
+      - labels:
+          stream: stream
